@@ -3,173 +3,184 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import os
+import io
 
-# --- 页面设置 ---
+# --- 1. 页面配置 ---
 st.set_page_config(page_title="项目管理看板", layout="wide")
-st.title("🚀 团队项目进度与风险管理看板")
+st.title("🚀 团队项目进度与风险管理工具")
 
-# 文件路径
-TASKS_FILE = "tasks_data_final.csv"
-RISKS_FILE = "risks_data_final.csv"
+TASKS_FILE = "tasks_v1.csv"
+RISKS_FILE = "risks_v1.csv"
 
-# --- 数据加载逻辑  ---
+# --- 2. 数据处理函数 ---
 def load_data():
-    # 处理任务数据
+    # 加载任务
     if os.path.exists(TASKS_FILE):
         df = pd.read_csv(TASKS_FILE)
-        # 如果文件里缺了“进度”这一列，强制补齐
-        if '进度' not in df.columns:
-            df['进度'] = 0
-        # 如果文件里缺了“任务”列，重新初始化
-        if '任务' not in df.columns:
-            df = pd.DataFrame(columns=["任务", "负责人", "状态", "开始", "结束", "进度"])
+        if '进度' not in df.columns: df['进度'] = 0
     else:
-        # 默认初始数据
-        df = pd.DataFrame([
-            {"任务": "文献调研", "负责人": "1号", "状态": "已完成", "开始": "2026-1-21", "结束": "2026-2-23" ,"进度": 50},
-            {"任务": "代码框架搭建", "负责人": "2号", "状态": "进行中", "开始": "2026-1-21", "结束": "2026-1-30","进度": 20},
-            {"任务": "论文撰写", "负责人": "3号", "状态": "待办", "开始": "2026-1-21", "结束": "2026-2-10","进度": 10},
-        ])
+        df = pd.DataFrame(columns=["任务", "负责人", "状态", "开始", "结束", "进度"])
     
-    # 处理风险数据
+    # 加载风险
     if os.path.exists(RISKS_FILE):
         rdf = pd.read_csv(RISKS_FILE)
     else:
         rdf = pd.DataFrame(columns=["风险点", "影响程度", "状态", "应对措施"])
-    
     return df, rdf
-
-# 初始化 session_state
-if 'tasks' not in st.session_state or 'risks' not in st.session_state:
-    tasks_df, risks_df = load_data()
-    st.session_state.tasks = tasks_df
-    st.session_state.risks = risks_df
 
 def save_data():
     st.session_state.tasks.to_csv(TASKS_FILE, index=False)
     st.session_state.risks.to_csv(RISKS_FILE, index=False)
 
-# --- 侧边栏：添加新任务 ---
-st.sidebar.header("➕ 添加新任务")
-with st.sidebar.form("task_form"):
-    new_task = st.text_input("任务名称")
-    owner = st.text_input("负责人")
-    status = st.selectbox("初始状态", ["待办", "进行中", "已完成"])
+# 初始化
+if 'tasks' not in st.session_state:
+    st.session_state.tasks, st.session_state.risks = load_data()
 
-    init_progress = st.slider("初始进度 (%)", 0, 100, 0) 
+# --- 3. 侧边栏：添加任务 & 导出 ---
+st.sidebar.header("➕ 新建任务")
+with st.sidebar.form("new_task_form"):
+    t_name = st.text_input("任务名称")
+    t_owner = st.text_input("负责人")
+    t_status = st.selectbox("状态", ["待办", "进行中", "已完成"])
+    t_prog = st.slider("初始进度 (%)", 0, 100, 100 if t_status == "已完成" else 0)
+    t_start = st.date_input("开始日期", datetime.now())
+    t_end = st.date_input("结束日期", datetime.now() + timedelta(days=7))
     
-    start_date = st.date_input("开始日期", datetime.now())
-    end_date = st.date_input("结束日期", datetime.now() + timedelta(days=7))
-    submit_task = st.form_submit_button("添加任务")
-    
-    if submit_task and new_task:
-        final_p = 100 if status == "已完成" else init_progress
-        new_row = {
-            "任务": new_task, 
-            "负责人": owner, 
-            "状态": status, 
-            "开始": str(start_date), 
-            "结束": str(end_date), 
-            "进度": final_p  # 确保这里有进度
-        }
-        st.session_state.tasks = pd.concat([st.session_state.tasks, pd.DataFrame([new_row])], ignore_index=True)
+    if st.form_submit_button("确认添加") and t_name:
+        new_data = pd.DataFrame([{"任务": t_name, "负责人": t_owner, "状态": t_status, 
+                                 "开始": str(t_start), "结束": str(t_end), "进度": t_prog}])
+        st.session_state.tasks = pd.concat([st.session_state.tasks, new_data], ignore_index=True)
         save_data()
         st.rerun()
 
+# 导出功能
+st.sidebar.divider()
+st.sidebar.subheader("💾 数据备份")
+buffer = io.BytesIO()
+with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+    st.session_state.tasks.to_excel(writer, index=False, sheet_name='任务清单')
+st.sidebar.download_button(label="📥 导出 Excel", data=buffer.getvalue(), 
+                           file_name="项目进度表.xlsx", mime="application/vnd.ms-excel")
+st.sidebar.success("准备就绪！")
 
-# --- 核心看板逻辑 ---
-st.header("📋 敏捷开发看板")
-cols = st.columns(3)
-status_list = ["待办", "进行中", "已完成"]
+# --- 4. 关键绩效指标 (KPI) ---
+tasks = st.session_state.tasks
+total = len(tasks)
+done = len(tasks[tasks["状态"]=="已完成"])
+doing = len(tasks[tasks["状态"]=="进行中"])
+overdue = 0
+if total > 0:
+    # 延期检查
+    overdue = len(tasks[(pd.to_datetime(tasks['结束']) < datetime.now()) & (tasks['状态'] != "已完成")])
 
-for i, status_type in enumerate(status_list):
-    with cols[i]:
-        st.subheader(f"【{status_type}】")
-        # 筛选对应状态的任务
-        filtered_tasks = st.session_state.tasks[st.session_state.tasks["状态"] == status_type]
-        
-        for idx, row in filtered_tasks.iterrows():
-            # 使用索引 idx 保证 key 的唯一性
-            with st.expander(f"📌 {row['任务']} ({row['进度']}%)"):
-                st.write(f"负责人: {row['负责人']}")
-                
-                # 状态修改
-                new_s = st.selectbox("修改状态", status_list, 
-                                     index=status_list.index(status_type), 
-                                     key=f"status_{idx}")
-                
-                # 进度修改
-                current_p = int(row['进度'])
-                new_p = current_p
-                if new_s == "进行中":
-                    new_p = st.slider("完成进度 (%)", 0, 100, current_p, key=f"prog_{idx}")
-                elif new_s == "已完成":
-                    new_p = 100
-                elif new_s == "待办":
-                    new_p = 0
-                
-                # 检测到变动则保存
-                if new_s != status_type or new_p != current_p:
-                    st.session_state.tasks.at[idx, '状态'] = new_s
-                    st.session_state.tasks.at[idx, '进度'] = new_p
-                    save_data()
-                    st.rerun()
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("总任务数", total)
+m2.metric("已完成", f"{done}", f"{done/total:.0%}" if total > 0 else "0%")
+m3.metric("进行中", doing)
+m4.metric("延期警告", overdue, delta_color="inverse" if overdue > 0 else "normal")
 
-st.divider()
+# --- 5. 主界面标签页 ---
+tab1, tab2, tab3 = st.tabs(["📋 敏捷看板", "📊 时间轴(甘特图)", "🛡️ 风险日志"])
 
-# --- 甘特图可视化 ---
-st.header("⏳ 项目时间线 (甘特图)")
-if not st.session_state.tasks.empty:
-    df_gantt = st.session_state.tasks.copy()
-    df_gantt['开始'] = pd.to_datetime(df_gantt['开始'])
-    df_gantt['结束'] = pd.to_datetime(df_gantt['结束'])
+with tab1:
+    col_a, col_b, col_c = st.columns(3)
+    status_cols = {"待办": col_a, "进行中": col_b, "已完成": col_c}
     
-    fig = px.timeline(
-        df_gantt, 
-        x_start="开始", 
-        x_end="结束", 
-        y="任务", 
-        color="状态",
-        text="进度", 
-        hover_data=["负责人", "进度"],
-        color_discrete_map={"待办": "#E5ECF6", "进行中": "#FFA15A", "已完成": "#636EFA"}
-    )
-    fig.update_traces(texttemplate='%{text}%', textposition='inside')
-    fig.update_yaxes(autorange="reversed") 
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("暂无任务数据，请在左侧添加。")
+    for status, col in status_cols.items():
+        with col:
+            st.markdown(f"### {status}")
+            filtered = tasks[tasks["状态"] == status]
+            for idx, row in filtered.iterrows():
+                with st.expander(f"📌 {row['任务']} ({row['进度']}%)"):
+                    st.caption(f"负责人: {row['负责人']} | 截止: {row['结束']}")
+                    
+                    # 动态修改状态
+                    new_status = st.selectbox("变更状态", ["待办", "进行中", "已完成"], 
+                                             index=["待办", "进行中", "已完成"].index(status),
+                                             key=f"st_{idx}")
+                    
+                    # 只有进行中显示滑动条
+                    new_p = row['进度']
+                    if new_status == "进行中":
+                        new_p = st.slider("进度更新", 0, 100, int(row['进度']), key=f"pg_{idx}")
+                    elif new_status == "已完成":
+                        new_p = 100
+                    
+                    # 保存变更
+                    if new_status != status or new_p != row['进度']:
+                        st.session_state.tasks.at[idx, '状态'] = new_status
+                        st.session_state.tasks.at[idx, '进度'] = new_p
+                        save_data()
+                        st.rerun()
+                    
+                    # 删除按钮
+                    if st.button("🗑️ 删除任务", key=f"del_{idx}"):
+                        st.session_state.tasks = st.session_state.tasks.drop(idx)
+                        save_data()
+                        st.rerun()
 
-# 里程碑预警
-today = datetime.now()
-st.subheader("⚠️ 临近里程碑")
-upcoming = df_gantt[(df_gantt['结束'] >= today) & (df_gantt['状态'] != "已完成")]
-if not upcoming.empty:
-    for _, row in upcoming.iterrows():
-        days_left = (row['结束'] - today).days
-        if days_left <= 3:
-            st.warning(f"⏰ 任务 '{row['任务']}' 将在 {days_left} 天后截止！负责人: {row['负责人']}")
-else:
-    st.success("目前没有紧急的截止日期。")
+with tab2:
+    st.subheader("⏳ 项目进度分析")
+    
+    if not st.session_state.tasks.empty:
+        # --- 数据预处理 ---
+        df_gantt = st.session_state.tasks.copy()
+        df_gantt['结束'] = pd.to_datetime(df_gantt['结束']).dt.date # 转为纯日期
+        today = datetime.now().date()
+        
 
-st.divider()
+        st.markdown("### ⚠️ 临近里程碑")
+        uncompleted = df_gantt[df_gantt['状态'] != "已完成"]
+        overdue_tasks = uncompleted[uncompleted['结束'] < today]
+        upcoming_tasks = uncompleted[(uncompleted['结束'] >= today) & 
+                                    (uncompleted['结束'] <= today + timedelta(days=3))]
+        
+        # --- 渲染报警信息 ---
+        if overdue_tasks.empty and upcoming_tasks.empty:
+            st.success("✅ 目前没有紧急或延期的任务。")
+        else:
+            # 显示已延期 
+            for _, row in overdue_tasks.iterrows():
+                st.error(f"🚨 **已延期**: '{row['任务']}' (原定: {row['结束']}) - 负责人: {row['负责人']}")
+            
+            # 显示即将到期 
+            for _, row in upcoming_tasks.iterrows():
+                days_left = (row['结束'] - today).days
+                if days_left == 0:
+                    st.warning(f"⏰ **今天截止**: '{row['任务']}' - 负责人: {row['负责人']}")
+                else:
+                    st.warning(f"⏰ **即将截止**: '{row['任务']}' 还有 {days_left} 天 - 负责人: {row['负责人']}")
 
-# --- 风险管理 ---
-st.header("🛡️ 风险管理日志")
-c1, c2 = st.columns([1, 2])
-with c1:
-    with st.form("risk_form"):
-        r_name = st.text_input("风险描述")
-        r_impact = st.select_slider("影响程度", options=["低", "中", "高"])
-        r_action = st.text_area("应对措施")
-        if st.form_submit_button("记录风险") and r_name:
-            new_r = pd.DataFrame([{"风险点": r_name, "影响程度": r_impact, "状态": "监控中", "应对措施": r_action}])
-            st.session_state.risks = pd.concat([st.session_state.risks, new_r], ignore_index=True)
-            st.success("风险已记录！")
-            save_data()
-            st.rerun()
-with c2:
-    st.dataframe(st.session_state.risks, use_container_width=True)
+        st.divider()
+
+        # --- 甘特图展示 ---
+        st.subheader("📊 项目时间线")
+        fig = px.timeline(df_gantt, x_start="开始", x_end="结束", y="任务", color="状态", text="进度",
+                         color_discrete_map={"待办": "#E5ECF6", "进行中": "#FFA15A", "已完成": "#636EFA"})
+        fig.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig, use_container_width=True)
+        
+    else:
+        st.info("暂无数据，请在左侧添加任务。")
+
+
+with tab3:
+    st.subheader("风险追踪")
+    r_col1, r_col2 = st.columns([1, 2])
+    with r_col1:
+        with st.form("risk_f"):
+            r_n = st.text_input("风险描述")
+            r_l = st.select_slider("影响程度", ["低", "中", "高"])
+            r_action = st.text_area("风险具体影响")
+            r_action = st.text_area("应对措施")
+            if st.form_submit_button("提交") and r_n:
+                new_r = pd.DataFrame([{"风险点": r_n, "影响程度": r_l, "状态": "监控中", "具体影响": r_action, "应对措施": r_action}])
+                st.session_state.risks = pd.concat([st.session_state.risks, new_r], ignore_index=True)
+                st.success("风险已记录！")
+                save_data()
+                st.rerun()
+    with r_col2:
+        st.dataframe(st.session_state.risks, use_container_width=True)
 
 st.info("提示：此为初始版本网站，欢迎反馈建议以改进功能！")
 #执行运行命令：streamlit run project_app.py
