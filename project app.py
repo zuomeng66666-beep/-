@@ -7,6 +7,32 @@ import io
 
 # --- 1. 页面配置 ---
 st.set_page_config(page_title="多项目协同管理工具", layout="wide")
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stExpander {
+        border: 1px solid #e6e9ef;
+        border-radius: 10px;
+        background-color: black;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 10px;
+    }
+    div[data-metric-label] {
+        background-color: #ffffff;
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        border: 1px solid #f0f2f6;
+    }
+    section[data-testid="stSidebar"] {
+        background-color: #1e293b;
+        color: white;
+    }
+    section[data-testid="stSidebar"] .stMarkdown, section[data-testid="stSidebar"] label {
+        color: #f1f5f9 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 st.title("⌛团队多项目进度与风险管理看板")
 TASKS_FILE = "all_tasks_v2.csv"
 RISKS_FILE = "all_risks_v2.csv"
@@ -56,8 +82,10 @@ if 'tasks' not in st.session_state:
 
 
 # --- 3. 侧边栏：多项目管理 ---
-st.sidebar.header("📁 项目空间管理")
 
+st.sidebar.markdown("# 🚀 侧边栏")
+st.sidebar.markdown("---")
+st.sidebar.header("📁 项目空间管理")
 # 创建新项目
 with st.sidebar.expander("✨ 新建项目"):
     new_p_name = st.text_input("输入新项目名称")
@@ -88,16 +116,18 @@ with st.sidebar.form("new_task_form"):
     t_prog = st.slider("初始进度 (%)", 0, 100, 100 if t_status == "已完成" else 0)
     t_start = st.date_input("开始日期", datetime.now())
     t_end = st.date_input("结束日期", datetime.now() + timedelta(days=7))
-    
     if st.form_submit_button("保存至该项目") and t_name:
-        new_data = pd.DataFrame([{
-            "项目名称": current_p, "任务": t_name, "负责人": t_owner, 
-            "状态": t_status, "开始": str(t_start), "结束": str(t_end), "进度": t_prog
-        }])
-        st.session_state.tasks = pd.concat([st.session_state.tasks, new_data], ignore_index=True)
-        add_log(current_p, t_name, "新建了该任务")
-        save_data()
-        st.rerun()
+        if t_start > t_end:
+            st.error("❌ 错误：开始日期不能晚于结束日期")
+        else:
+            new_data = pd.DataFrame([{
+                "项目名称": current_p, "任务": t_name, "负责人": t_owner, 
+                "状态": t_status, "开始": str(t_start), "结束": str(t_end), "进度": t_prog
+            }])
+            st.session_state.tasks = pd.concat([st.session_state.tasks, new_data], ignore_index=True)
+            add_log(current_p, t_name, "新建了该任务")
+            save_data()
+            st.rerun()
 
 # 3.4 导出功能
 st.sidebar.divider()
@@ -113,7 +143,6 @@ if st.sidebar.button("📊 生成Excel"):
             safe_name = str(p_name).replace("[","").replace("]","")[:30]
             p_df.to_excel(writer, index=False, sheet_name=safe_name)
         
-        # 风险单独一页
         st.session_state.risks.to_excel(writer, index=False, sheet_name="风险追踪总表")
     
     st.sidebar.download_button(
@@ -135,8 +164,9 @@ total = len(tasks)
 done = len(tasks[tasks["状态"]=="已完成"])
 doing = len(tasks[tasks["状态"]=="进行中"])
 overdue = 0
+today_dt = pd.Timestamp(datetime.now().date())
 if total > 0:
-    overdue = len(tasks[(pd.to_datetime(tasks['结束']) < datetime.now()) & (tasks['状态'] != "已完成")])
+    overdue = len(tasks[(pd.to_datetime(tasks['结束']) < today_dt) & (tasks['状态'] != "已完成")])
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("当前项目任务数", total)
@@ -152,50 +182,44 @@ with tab1:
     status_cols = {"待办": col_a, "进行中": col_b, "已完成": col_c}
     for status, col in status_cols.items():
         with col:
-            st.markdown(f"### {status}")
-            # 注意：在看板中要使用 tasks 过滤后的内容
+            color = {"待办": "#6c757d", "进行中": "#007bff", "已完成": "#28a745"}.get(status)
+            st.markdown(f"""
+            <div style="background-color:{color}; padding:10px; border-radius:5px; margin-bottom:15px;">
+                <h3 style="color:white; margin:0; text-align:center; font-size:1.2rem;">{status}</h3>
+            </div>
+            """, unsafe_allow_html=True)
             filtered = tasks[tasks["状态"] == status]
             for idx, row in filtered.iterrows():
                 with st.expander(f"📌 {row['任务']} ({row['进度']}%)"):
-                    st.caption(f"负责人: {row['负责人']} | 截止: {row['结束']}")
-                    
+                    st.markdown(f"""
+    <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:#666; margin-bottom:10px;">
+        <span>👤 {row['负责人']}</span>
+        <span>📅 {row['结束']}</span>
+    </div>
+    """, unsafe_allow_html=True)
                     # 1. 获取当前状态
                     new_status = st.selectbox("变更状态", ["待办", "进行中", "已完成"], 
                                              index=["待办", "进行中", "已完成"].index(status),
                                              key=f"st_{idx}")
                     
                     # 2. 进度逻辑处理
-                    current_p = int(row['进度'])
-                    new_p = current_p
+                    current_progress = int(row['进度'])
+                    new_p = current_progress
                     
                     if new_status == "进行中":
-                        # 如果是从“待办”切过来的，且进度还是0，提示用户滑动
-                        new_p = st.slider("进度更新", 0, 100, current_p, key=f"pg_{idx}")
-                        
-                        # ✨ 核心改进：如果进度滑到了 100%，自动切换状态为“已完成”
+                        new_p = st.slider("进度更新", 0, 100, current_progress, key=f"pg_{idx}")
                         if new_p == 100:
                             new_status = "已完成"
                             
                     elif new_status == "已完成":
-                        # 如果手动切到“已完成”，进度强制 100
                         new_p = 100
                         
                     elif new_status == "待办":
-                        # 如果手动切到“待办”，进度强制 0
                         new_p = 0
-                    if status == "已完成" and new_p < 100:
-                        new_status = "进行中"
-
-                    # 4. 保存变更
-                    if new_status != status or new_p != current_p:
-                        st.session_state.tasks.at[idx, '状态'] = new_status
-                        st.session_state.tasks.at[idx, '进度'] = new_p
-                        save_data()
-                        st.rerun()
         
-                    if new_status != status or new_p != current_p:
-                        log_msg = f"状态: {status}->{new_status} | 进度: {current_p}%->{new_p}%"
-                        add_log(row['项目名称'], row['任务'], log_msg) # 记录日志
+                    if new_status != status or new_p != current_progress:
+                        log_msg = f"状态: {status}->{new_status} | 进度: {current_progress}%->{new_p}%"
+                        add_log(row['项目名称'], row['任务'], log_msg) 
             
                         st.session_state.tasks.at[idx, '状态'] = new_status
                         st.session_state.tasks.at[idx, '进度'] = new_p
@@ -204,7 +228,7 @@ with tab1:
 
                     st.divider()
                     if st.button(f"🗑️ 删除任务", key=f"del_{idx}"):
-                        add_log(row['项目名称'], row['任务'], "彻底删除了该任务") # 记录日志
+                        add_log(row['项目名称'], row['任务'], "彻底删除了该任务")
                         st.session_state.tasks = st.session_state.tasks.drop(idx).reset_index(drop=True)
                         save_data()
                         st.warning(f"任务 '{row['任务']}' 已删除")
@@ -212,12 +236,12 @@ with tab1:
 
 with tab2:
     if not tasks.empty:
-        # --- 1. 数据预处理 ---
         df_analysis = tasks.copy()
-        df_analysis['开始'] = pd.to_datetime(df_analysis['开始']).dt.date
-        df_analysis['结束'] = pd.to_datetime(df_analysis['结束']).dt.date
-        today = datetime.now().date()
-        
+        # 转为 Datetime 格式，兼容计算和绘图
+        df_analysis['开始'] = pd.to_datetime(df_analysis['开始'])
+        df_analysis['结束'] = pd.to_datetime(df_analysis['结束'])
+        today = pd.Timestamp(datetime.now().date()) 
+
         # --- 2. 顶部仪表盘 (KPI) ---
         avg_progress = df_analysis['进度'].mean()
         total_tasks = len(df_analysis)
@@ -240,12 +264,10 @@ with tab2:
         
         with col_chart1:
             st.markdown("##### 📦 项目任务状态分布")
-            # 统计状态数量
             status_counts = df_analysis['状态'].value_counts().reset_index()
-            #  Pandas reset_index 后列名为 ['状态', 'count']
             fig_pie = px.pie(status_counts, 
-                             names='状态',   # 原来的 'index' 改为 '状态'
-                             values='count', # 原来的 '状态' 改为 'count'
+                             names='状态',  
+                             values='count', 
                              color='状态',
                              color_discrete_map={"待办": "#E5ECF6", "进行中": "#FFA15A", "已完成": "#636EFA"},
                              hole=0.4)
@@ -255,10 +277,9 @@ with tab2:
         with col_chart2:
             st.markdown("##### 👤 成员工作负荷 (任务数)")
             member_counts = df_analysis['负责人'].value_counts().reset_index()
-            #  Pandas reset_index 后列名为 ['负责人', 'count']
             fig_bar = px.bar(member_counts, 
-                             x='负责人',  # 原来的 'index' 改为 '负责人'
-                             y='count',    # 原来的 '负责人' 改为 'count'
+                             x='负责人', 
+                             y='count',   
                              labels={'负责人': '成员', 'count': '任务量'},
                              color='count', 
                              color_continuous_scale='Blues')
@@ -290,7 +311,6 @@ with tab2:
 
         # --- 5. 项目时间线 (甘特图) ---
         st.markdown("##### 📊 项目详细时间轴 (甘特图)")
-        # 转换回 datetime 格式以适配 plotly timeline
         df_analysis['开始'] = pd.to_datetime(df_analysis['开始'])
         df_analysis['结束'] = pd.to_datetime(df_analysis['结束'])
         
@@ -332,7 +352,18 @@ with tab3:
                 st.success("风险已记录！")
                 st.rerun()
     with r_col2:
-        st.dataframe(risks.drop(columns=["项目名称"]), use_container_width=True)
+        def color_risk(val):
+            color = '#ff4b4b' if val == '高' else ('#ffa15a' if val == '中' else '#28a745')
+            return f'color: {color}; font-weight: bold'
+
+        if not risks.empty:
+            styled_risks = risks.drop(columns=["项目名称"]).style.applymap(color_risk, subset=['影响程度'])
+            st.dataframe(styled_risks, use_container_width=True)
+        else:
+            st.info("暂无风险记录。")
+
+
+
 with tab4:
     st.subheader("项目操作历史流")
     # 只显示当前项目的日志，并按时间倒序排列
@@ -347,6 +378,15 @@ with tab4:
 st.divider()
 st.info(f"💡 提示：当前视图已根据当前项目过滤。导出 Excel 时将包含所有项目的 Sheet。")
 #执行运行命令：streamlit run project_app.py
+
+
+
+
+
+
+
+
+
 #改进方向：
 #1. 增加任务优先级字段，并在看板中支持按优先级排序显示。
 #2. 增加任务标签功能，支持多维度筛选和查看任务。
