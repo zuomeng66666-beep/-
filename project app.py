@@ -9,27 +9,53 @@ import io
 st.set_page_config(page_title="多项目协同管理工具", layout="wide")
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stExpander {
-        border: 1px solid #e6e9ef;
-        border-radius: 10px;
-        background-color: black;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        margin-bottom: 10px;
+    /* 1. 全局底色：柔和的浅灰蓝渐变，衬托玻璃感 */
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
     }
-    div[data-metric-label] {
-        background-color: #ffffff;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        border: 1px solid #f0f2f6;
-    }
+
+    /* 2. 侧边栏：淡蓝色液态玻璃 */
     section[data-testid="stSidebar"] {
-        background-color: #1e293b;
-        color: white;
+        background: rgba(200, 230, 255, 0.5) !important; /* 半透明淡蓝色 */
+        backdrop-filter: blur(20px); /* 磨砂模糊 */
+        -webkit-backdrop-filter: blur(20px);
+        border-right: 1px solid rgba(255, 255, 255, 0.3);
     }
-    section[data-testid="stSidebar"] .stMarkdown, section[data-testid="stSidebar"] label {
-        color: #f1f5f9 !important;
+    
+    section[data-testid="stSidebar"] .stMarkdown, 
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3 {
+        color: #1e3a8a !important; 
+    }
+
+    /* 3. KPI 卡片：纯净玻璃感 */
+    div[data-metric-label] {
+        background: rgba(255, 255, 255, 0.4) !important;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        border-radius: 15px !important;
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+    }
+
+    /* 4. 任务卡片 (Expander) 玻璃化 */
+    .stExpander {
+        background: rgba(255, 255, 255, 0.3) !important;
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.4) !important;
+        border-radius: 12px !important;
+    }
+
+    /* 5. 选项卡美化 */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: transparent !important;
+        gap: 10px;
+    }
+    button[data-baseweb="tab"] {
+        background-color: rgba(255, 255, 255, 0.2) !important;
+        border-radius: 10px 10px 0 0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -80,6 +106,33 @@ def add_log(project, task, action):
 if 'tasks' not in st.session_state:
     st.session_state.tasks, st.session_state.risks, st.session_state.logs = load_data()
 
+def ai_risk_predictor(tasks, risks):
+    """模拟 AI 风险评估逻辑"""
+    if tasks.empty:
+        return 0, 0, "暂无数据供 AI 分析"
+    
+    # 1. 计算基础风险值 (0-100)
+    avg_progress = tasks['进度'].mean()
+    high_risks = len(risks[risks['影响程度'] == "高"])
+    overdue_count = len(tasks[(pd.to_datetime(tasks['结束']) < datetime.now()) & (tasks['状态'] != "已完成")])
+    
+    # 风险指数算法 (模拟权重)
+    risk_score = (high_risks * 25) + (overdue_count * 15) + (100 - avg_progress) * 0.4
+    risk_score = min(max(risk_score, 5), 99) 
+    
+    # 2. 预测延期天数
+    predicted_delay = int((high_risks * 3.5) + (overdue_count * 2))
+    
+    # 3. AI 诊断建议
+    if risk_score > 70:
+        advice = "🚨 项目处于极高风险！高风险点堆积，建议立即冻结非核心任务，优先处理阻塞点。"
+    elif risk_score > 40:
+        advice = "⚠️ 风险中等。部分任务进度滞后，建议调配人力资源至负责人较为集中的模块。"
+    else:
+        advice = "✅ 运行稳健。当前风险受控，保持现有节奏即可。"
+        
+    return round(risk_score, 1), predicted_delay, advice
+
 
 # --- 3. 侧边栏：多项目管理 ---
 
@@ -91,12 +144,11 @@ with st.sidebar.expander("✨ 新建项目"):
     new_p_name = st.text_input("输入新项目名称")
     if st.button("确认创建"):
         if new_p_name:
-            # 这里不需要立刻写入CSV，只需在添加第一个任务时关联即可
             st.success(f"项目 '{new_p_name}' 已创建，请在下方添加任务。")
         else:
             st.error("名称不能为空")
 
-# 项目切换器
+
 existing_projs = st.session_state.tasks["项目名称"].unique().tolist()
 if not existing_projs: existing_projs = ["默认项目"]
 # 如果用户刚输入了新项目名但还没任务，也把它加进下拉列表里
@@ -334,7 +386,32 @@ with tab2:
 
 
 with tab3:
-    st.subheader(f"🛡️风险管理")
+    score, delay, advice = ai_risk_predictor(tasks, risks)
+    st.markdown(f"""
+        <div style="background: rgba(255, 255, 255, 0.2); 
+                    padding: 20px; 
+                    border-radius: 15px; 
+                    border: 1px solid rgba(255, 255, 255, 0.4);
+                    margin-bottom: 25px;
+                    backdrop-filter: blur(10px);">
+            <h4 style="margin:0; color:#1e3a8a;">🧠 AI 项目风险模拟预测</h4>
+            <div style="display: flex; justify-content: space-around; align-items: center; margin-top: 15px;">
+                <div style="text-align:center;">
+                    <p style="margin:0; color:#666; font-size:0.8rem;">崩坏风险指数</p>
+                    <h2 style="margin:0; color:{'#ff4b4b' if score > 60 else '#1e3a8a'};">{score}%</h2>
+                </div>
+                <div style="text-align:center; border-left: 1px solid rgba(0,0,0,0.1); border-right: 1px solid rgba(0,0,0,0.1); padding: 0 30px;">
+                    <p style="margin:0; color:#666; font-size:0.8rem;">预计潜在延期</p>
+                    <h2 style="margin:0; color:#1e3a8a;">+{delay} <span style="font-size:1rem;">天</span></h2>
+                </div>
+                <div style="flex:1; margin-left:30px; padding: 10px; background: rgba(255,255,255,0.3); border-radius:10px;">
+                    <p style="margin:0; color:#1e3a8a; font-size:0.9rem; font-style:italic;">" {advice} "</p>
+                </div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.subheader(f"🛡️风险记录与追踪")
     r_col1, r_col2 = st.columns([1, 2])
     with r_col1:
         with st.form("risk_f"):
@@ -388,6 +465,5 @@ st.info(f"💡 提示：当前视图已根据当前项目过滤。导出 Excel �
 
 
 #改进方向：
-#1. 增加任务优先级字段，并在看板中支持按优先级排序显示。
-#2. 增加任务标签功能，支持多维度筛选和查看任务。
-#3.多人协同，接入 Google Sheets 或数据库。
+#1.增加任务标签功能，支持多维度筛选和查看任务。
+#2.多人协同，接入 Google Sheets 或数据库。
